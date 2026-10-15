@@ -1,0 +1,169 @@
+<!doctype html>
+<!-- Headless smoke test: load the real app, drive it through its public API, print results in #out.
+     Run: node test/serve.mjs 8123 &  then
+     chrome --headless=new --disable-gpu --virtual-time-budget=30000 --dump-dom http://localhost:8123/test/smoke.html -->
+<html><head><meta charset="utf-8"><title>Pixelforge smoke test</title><link rel="stylesheet" href="../css/style.css"></head>
+<body>
+<div id="app" style="width:1200px;height:800px">
+  <div id="menubar"><span class="brand">Pixel<span>forge</span></span></div>
+  <div id="optionsbar"></div><div id="toolbar"></div>
+  <div id="center"><div id="tabs"></div><div id="viewport" style="width:800px;height:600px"><canvas id="view"></canvas><div id="empty"><button id="emptyNew"></button><button id="emptyOpen"></button></div><textarea id="textEditor" class="hidden"></textarea><div id="dropOverlay" class="hidden"></div></div></div>
+  <div id="panels">
+    <div class="panel" id="layersPanel"><h3>Layers</h3><div class="layer-controls"><select id="layerBlend"></select><input id="layerOpacity" type="range"><span id="layerOpacityVal"></span></div><div class="body"><ul id="layerList"></ul></div><div class="layer-buttons" id="layerButtons"></div></div>
+    <div class="panel" id="histogramPanel"><h3>Histogram</h3><div class="body"><canvas id="histogram"></canvas></div></div>
+    <div class="panel" id="historyPanel"><h3>History</h3><ul id="historyList"></ul></div>
+    <div class="panel" id="infoPanel"><h3>Info</h3><div class="body" id="infoBody"></div></div>
+  </div>
+  <div id="statusbar"><span id="stSize"></span><span id="stZoom"></span><span id="stPos"></span><span id="stSel"></span></div>
+</div>
+<div id="toast" class="hidden"></div>
+<pre id="out">PENDING</pre>
+<script>
+  window.__errors = [];
+  const out = (t) => { document.getElementById('out').textContent = t; };
+  window.onerror = function (m, s, l, c) { window.__errors.push(m + ' @ ' + s + ':' + l + ':' + c); console.log('ERR', m, s, l, c); };
+  window.onunhandledrejection = function (e) { window.__errors.push('unhandled: ' + (e.reason && e.reason.stack || e.reason)); console.log('UNHANDLED', e.reason); };
+</script>
+<script src="../js/util.js"></script>
+<script src="../js/encoders.js"></script>
+<script src="../js/document.js"></script>
+<script src="../js/adjust.js"></script>
+<script src="../js/io.js"></script>
+<script src="../js/tools.js"></script>
+<script src="../js/dialogs.js"></script>
+<script src="../js/app.js"></script>
+<script>
+(async function () {
+  const results = [];
+  const ok = (name, cond, extra) => {
+    results.push((cond ? 'PASS ' : 'FAIL ') + name + (extra ? ' -- ' + extra : ''));
+    console.log(results[results.length - 1]);
+    out('PROGRESS\n' + results.join('\n'));
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    await sleep(50);
+    const app = PF.app;
+    ok('app initialised', !!app && !!document.querySelector('.tool-btn'), document.querySelectorAll('.tool-btn').length + ' tool buttons, ' + document.querySelectorAll('.menu').length + ' menus');
+
+    // document + layers
+    const d = new PF.Doc(200, 120, 'T');
+    const bg = d.newLayer('Background'); bg.ctx.fillStyle = '#808080'; bg.ctx.fillRect(0, 0, 200, 120);
+    app.openDocument(d);
+    ok('document opened', app.doc === d && document.querySelectorAll('.layer-row').length === 1);
+    app.run('layerNew');
+    ok('new layer', d.layers.length === 2 && d.active.name === 'Layer 2');
+    d.active.ctx.fillStyle = '#ff0000'; d.active.ctx.fillRect(20, 20, 50, 50); d.invalidate();
+    d.active.opacity = 0.5; d.active.blend = 'multiply';
+    let px = d.getImageData().data; const i = (30 * 200 + 30) * 4;
+    ok('composite multiply @50%', Math.abs(px[i] - 128) <= 1 && px[i + 1] === 64 && px[i + 2] === 64, 'rgb(' + px[i] + ',' + px[i + 1] + ',' + px[i + 2] + ')');
+    app.run('layerDuplicate'); ok('duplicate layer', d.layers.length === 3 && /copy/.test(d.active.name));
+    app.run('layerMergeDown'); ok('merge down', d.layers.length === 2);
+    app.run('undo'); ok('undo restores layer count', d.layers.length === 3, d.history.length + ' history left');
+    app.run('redo'); ok('redo', d.layers.length === 2);
+    d.saveState('move'); d.moveLayer(1, 0); ok('reorder', d.layers[0].name !== 'Background');
+    d.undo();
+
+    // gamma / levels / curves on pixel data
+    const img = { width: 2, height: 1, data: new Uint8ClampedArray([64, 128, 192, 255, 0, 255, 100, 255]) };
+    PF.adjust.gamma(img, { gamma: 2.2 });
+    ok('gamma 2.2 brightens midtones', img.data[0] === Math.round(255 * Math.pow(64 / 255, 1 / 2.2)) && img.data[4] === 0 && img.data[5] === 255, Array.from(img.data.slice(0, 3)).join(','));
+    const lv = { width: 1, height: 1, data: new Uint8ClampedArray([100, 100, 100, 255]) };
+    PF.adjust.levels(lv, { inBlack: 50, inWhite: 150, gamma: 1, outBlack: 0, outWhite: 255 });
+    ok('levels stretch', Math.abs(lv.data[0] - 128) <= 1, lv.data[0]);
+    const lut = PF.adjust.curveLUT([[0, 0], [128, 200], [255, 255]]);
+    ok('curve LUT monotone through points', lut[0] === 0 && lut[128] === 200 && lut[255] === 255 && lut[64] > 64 && lut[64] < 200);
+    const hs = { width: 1, height: 1, data: new Uint8ClampedArray([255, 0, 0, 255]) };
+    PF.adjust.hsl(hs, { hue: 120 }); ok('hue rotate red->green', hs.data[1] > 250 && hs.data[0] < 5, Array.from(hs.data).join(','));
+    const bl = { width: 5, height: 1, data: new Uint8ClampedArray(20) }; for (let k = 0; k < 5; k++) { bl.data[k * 4] = k === 2 ? 255 : 0; bl.data[k * 4 + 3] = 255; }
+    PF.filters.gaussianBlur(bl, { radius: 1 }); ok('gaussian blur spreads', bl.data[8] < 255 && bl.data[4] > 0 && bl.data[4 + 3] === 255, Array.from(bl.data).filter((_, k) => k % 4 === 0).join(','));
+
+    // adjustment dialog with live preview + cancel restores
+    d.activeId = d.layers[0].id;
+    const before = d.layers[0].ctx.getImageData(0, 0, 1, 1).data[0];
+    PF.dialogs.gamma();
+    const range = document.querySelector('#modal input[type=range]');
+    range.value = 2; range.dispatchEvent(new Event('input'));
+    await sleep(60);
+    const during = d.layers[0].ctx.getImageData(0, 0, 1, 1).data[0];
+    ok('gamma dialog live preview', during > before, before + ' -> ' + during);
+    Array.from(document.querySelectorAll('#modal .buttons > button')).find((b) => b.textContent === 'Cancel').click();
+    ok('cancel restores pixels', d.layers[0].ctx.getImageData(0, 0, 1, 1).data[0] === before && !document.getElementById('modal'));
+    PF.dialogs.levels(); ok('levels dialog opens with histogram', !!document.querySelector('#modal canvas.hist')); PF.dialogs.close(); d.discardState();
+    PF.dialogs.curves(); ok('curves dialog opens', !!document.querySelector('#modal canvas.curve')); PF.dialogs.close(); d.discardState();
+
+    // selection-aware invert
+    d.selection = { x: 0, y: 0, w: 10, h: 10 };
+    app.run('invert');
+    px = d.layers[0].ctx.getImageData(0, 0, 20, 1).data;
+    ok('invert within selection only', px[0] === 127 && px[15 * 4] === 128, px[0] + ' / ' + px[60]);
+    d.selection = null;
+
+    // tools: brush stroke through pointer API
+    app.setTool('brush'); app.state.fg = '#0000ff';
+    const brush = PF.tools.byId.brush; d.activeId = d.layers[1].id;
+    brush.down({ x: 150, y: 100 }, { pressure: 0.5 }); brush.move({ x: 180, y: 100 }, {}); brush.up();
+    px = d.layers[1].ctx.getImageData(165, 100, 1, 1).data;
+    ok('brush paints', px[2] === 255 && px[3] > 200, Array.from(px).join(','));
+    app.setTool('eraser'); const er = PF.tools.byId.eraser; er.down({ x: 165, y: 100 }, {}); er.up();
+    ok('eraser erases', d.layers[1].ctx.getImageData(165, 100, 1, 1).data[3] === 0);
+    app.setTool('fill'); app.state.fg = '#00ff00'; PF.tools.byId.fill.down({ x: 100, y: 5 });
+    ok('bucket fill', d.layers[1].ctx.getImageData(100, 5, 1, 1).data[1] === 255 && d.layers[1].ctx.getImageData(30, 30, 1, 1).data[0] === 255);
+    app.setTool('shape'); const sh = PF.tools.byId.shape; app.state.fg = '#123456';
+    sh.down({ x: 0, y: 100 }); sh.move({ x: 20, y: 119 }, { shiftKey: false }); sh.up();
+    ok('shape rect', d.layers[1].ctx.getImageData(10, 110, 1, 1).data[0] === 0x12);
+    app.setTool('transform'); const tr = PF.tools.byId.transform;
+    app.opts('transform').angle = 90; tr.onOptionChange('angle');
+    tr.apply(); ok('free transform applies', app.state.toolId === 'move' && d.history[d.history.length - 1].label === 'Free Transform');
+    app.setTool('move'); PF.tools.byId.move.nudge(5, 0); ok('nudge', d.active.x === 5);
+
+    // geometry
+    d.saveState('x'); d.rotate(90); ok('rotate 90 swaps size', d.width === 120 && d.height === 200); d.undo();
+    d.saveState('x'); d.resizeImage(100, 60); ok('resize image', d.width === 100 && d.layers[0].width === 100); d.undo();
+    d.saveState('x'); d.resizeCanvas(300, 300, { ax: 0, ay: 0 }); ok('canvas size', d.width === 300); d.undo();
+    d.saveState('x'); d.crop({ x: 10, y: 10, w: 50, h: 40 }); ok('crop', d.width === 50 && d.height === 40); d.undo();
+    ok('undo restored original size', d.width === 200 && d.height === 120);
+
+    // export formats
+    const sizes = {};
+    for (const f of ['png', 'jpeg', 'webp', 'bmp', 'bmp32', 'tiff', 'ico', 'pdf']) {
+      const b = await PF.io.exportBlob(d, { format: f, quality: 80, scale: 100, icoSize: 'multi' });
+      sizes[f] = b.size;
+    }
+    ok('export all formats', Object.values(sizes).every((s) => s > 50), JSON.stringify(sizes));
+    ok('tiff size exact', sizes.tiff === 8 + 200 * 120 * 4 + 2 + 14 * 12 + 4 + 24);
+    ok('bmp24 size exact', sizes.bmp === 54 + 600 * 120);
+
+    // project round-trip
+    const pj = await PF.io.saveProject(d).text();
+    const d2 = await PF.io.loadProject(pj, 'T.pxf');
+    ok('project round-trip', d2.layers.length === d.layers.length && d2.width === 200 && d2.layers[1].blend === 'multiply' && d2.layers[1].opacity === 0.5);
+    const a = d.getImageData().data, b2 = d2.getImageData().data; let diff = 0; for (let k = 0; k < a.length; k++) if (a[k] !== b2[k]) diff++;
+    ok('project pixels identical', diff === 0, diff + ' differing bytes');
+
+    // batch convert from a Blob file
+    const file = new File([await PF.io.exportBlob(d, { format: 'png' })], 'in.png', { type: 'image/png' });
+    const conv = await PF.io.convertFile(file, { format: 'jpeg', quality: 70, maxDim: 100, background: '#ffffff' });
+    ok('batch convert resizes & renames', conv.name === 'in.jpg' && conv.blob.type === 'image/jpeg' && conv.blob.size > 100);
+    const zipBytes = PF.encoders.zip([{ name: conv.name, bytes: new Uint8Array(await conv.blob.arrayBuffer()) }]);
+    ok('zip built', zipBytes[0] === 0x50 && zipBytes[1] === 0x4b);
+
+    // menus & shortcuts
+    const hBefore = d.history.length;
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }));
+    ok('Ctrl+Z shortcut dispatches undo', d.history.length === hBefore - 1, hBefore + ' -> ' + d.history.length);
+    const menuItems = document.querySelectorAll('.dropdown .item').length;
+    ok('menus populated', menuItems > 70, menuItems + ' items');
+    PF.dialogs.exportAs(); await sleep(400); ok('export dialog estimates size', /KB|B/.test(document.querySelector('#modal .note').textContent), document.querySelector('#modal .note').textContent); PF.dialogs.close();
+    PF.dialogs.batchConvert(); ok('batch dialog opens', !!document.getElementById('modal')); PF.dialogs.close();
+    PF.dialogs.newDoc(); ok('new doc dialog opens', !!document.getElementById('modal')); PF.dialogs.close();
+    PF.dialogs.imageSize(); PF.dialogs.close(); PF.dialogs.canvasSize(); PF.dialogs.close(); PF.dialogs.shortcuts(); PF.dialogs.close();
+    ok('status bar updated', document.getElementById('stSize').textContent.indexOf('200') >= 0 && document.getElementById('stSize').textContent.indexOf('120') >= 0, document.getElementById('stSize').textContent);
+  } catch (e) {
+    results.push('EXCEPTION ' + (e.stack || e));
+  }
+  results.push('ERRORS ' + window.__errors.length + (window.__errors.length ? '\n' + window.__errors.join('\n') : ''));
+  out('SMOKE-RESULTS\n' + results.join('\n') + '\nSMOKE-END');
+})();
+</script>
+</body></html>

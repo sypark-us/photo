@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixelforge — browser image editor</title>
+<meta name="description" content="Free, local, browser-based image editor with layers, levels/gamma/curves adjustments, filters and multi-format export.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%233b8eea'/%3E%3Cpath d='M6 17l4-8 3 5 2-3 3 6z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <div id="menubar"><span class="brand">Pixel<span>forge</span></span></div>
+  <div id="optionsbar"></div>
+  <div id="toolbar"></div>
+
+  <div id="center">
+    <div id="tabs"></div>
+    <div id="viewport">
+      <canvas id="view"></canvas>
+      <div id="empty">
+        <div>
+          <h2>Pixelforge</h2>
+          <p>Drop images here, paste from the clipboard, or</p>
+          <p><button id="emptyNew" class="primary">New document</button><button id="emptyOpen">Open images…</button></p>
+          <p class="hint">Layers · Levels / Gamma / Curves · Filters · Export to PNG, JPEG, WebP, BMP, TIFF, ICO, PDF<br>Everything runs locally in your browser.</p>
+        </div>
+      </div>
+      <textarea id="textEditor" class="hidden" spellcheck="false"></textarea>
+      <div id="dropOverlay" class="hidden">Drop to open (hold Shift to add as layers)</div>
+    </div>
+  </div>
+
+  <div id="panels">
+    <div class="panel" id="layersPanel">
+      <h3>Layers</h3>
+      <div class="layer-controls">
+        <select id="layerBlend" title="Blend mode"></select>
+        <input id="layerOpacity" type="range" min="0" max="100" value="100" title="Opacity">
+        <span id="layerOpacityVal">100%</span>
+      </div>
+      <div class="body"><ul id="layerList"></ul></div>
+      <div class="layer-buttons" id="layerButtons"></div>
+    </div>
+    <div class="panel" id="histogramPanel">
+      <h3>Histogram</h3>
+      <div class="body"><canvas id="histogram"></canvas></div>
+    </div>
+    <div class="panel" id="historyPanel">
+      <h3>History</h3>
+      <ul id="historyList"></ul>
+    </div>
+    <div class="panel" id="infoPanel">
+      <h3>Info</h3>
+      <div class="body" id="infoBody"></div>
+    </div>
+  </div>
+
+  <div id="statusbar">
+    <span id="stSize">No document</span>
+    <span class="zoom"><button onclick="PF.app.run('zoomOut')">−</button><span id="stZoom"></span><button onclick="PF.app.run('zoomIn')">+</button><button onclick="PF.app.run('zoomFit')">Fit</button></span>
+    <span id="stPos"></span>
+    <span id="stSel"></span>
+  </div>
+</div>
+<div id="toast" class="hidden"></div>
+
+<script src="js/util.js"></script>
+<script src="js/encoders.js"></script>
+<script src="js/document.js"></script>
+<script src="js/adjust.js"></script>
+<script src="js/io.js"></script>
+<script src="js/tools.js"></script>
+<script src="js/dialogs.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
